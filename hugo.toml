@@ -2,3 +2,7 @@ baseURL = 'https://joelmathewc.github.io/'
 languageCode = 'en-us'
 title = '🛠️ JoelMathewC'
 theme = 'blowfish'
+
+[caches]
+  [caches.images]
+    dir = ':cacheDir/images'
