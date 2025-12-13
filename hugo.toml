@@ -6,3 +6,6 @@ theme = 'blowfish'
 [caches]
   [caches.images]
     dir = ':cacheDir/images'
+
+[taxonomies]
+  series = "series"

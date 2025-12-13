@@ -1,4 +1,6 @@
-# Projects
+---
+title: "Projects"
+---
 
 Like most people in the computer science world, all of my work is version controlled. As a byproduct of this tendancy my GitHub is both a portfolio of my work and a graveyard for the many hobby-projects that got left along the way 🪦
 
