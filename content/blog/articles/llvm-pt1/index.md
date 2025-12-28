@@ -75,3 +75,7 @@ In comparison we can consider the following systems:
 ### LLVM System Architecture
 - User defined static compiler frontend converts source language to LLVM representation, it is expected that during this convertion users perform source language specific optimizations there itself as LLVM will not preserve source langauge semantics to exploit certain optimization opportunities
 - The linker then performs a series of link time optimization. The code is then compiled down to a binary and the LLVM representation is saved alongside it (it is also possible for the code to be JIT'ed). The binary contains instrumentation to extract profile data which can be used to optimizr at runtime
+
+### Tutorials
+
+Now that we have discussed the basics of LLVM, the best way to understand some of these concepts is to build a small compiler in it. Over the next few posts in this series I details the steps in building a full-fledged compiler using LLVM.
