@@ -8,6 +8,8 @@ Below is a concise list of <u>completed</u> projects that have shaped my journey
 
 {{< github repo="bfGraph/STGraph" showThumbnail=false >}}
 <br />
+{{< github repo="JoelMathewC/apl-llvm" showThumbnail=false >}}
+<br />
 {{< github repo="JoelMathewC/eXpl" showThumbnail=false >}}
 <br />
 {{< github repo="JoelMathewC/eXpOS" showThumbnail=false >}}
