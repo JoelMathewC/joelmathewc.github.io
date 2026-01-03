@@ -14,8 +14,10 @@ Below is a concise list of <u>completed</u> projects that have shaped my journey
 <br />
 {{< github repo="JoelMathewC/eXpOS" showThumbnail=false >}}
 <br />
-{{< github repo="CliJEO/clijeo-public" showThumbnail=false >}}
-<br />
 {{< github repo="JoelMathewC/rusty-rook" showThumbnail=false >}}
 <br />
 {{< github repo="JoelMathewC/cloud-management-system" showThumbnail=false >}}
+<br />
+{{< github repo="CliJEO/clijeo-public" showThumbnail=false >}}
+<br />
+{{< github repo="JoelMathewC/Strudel" showThumbnail=false >}}
