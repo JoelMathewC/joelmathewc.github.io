@@ -8,7 +8,7 @@ If you have ever considered compiler development as a profession, you have defin
 
 {{< alert cardColor="#E7A74A" textColor="#ffffff" iconColor="#ffffff" >}}Must have Low Level Virtual Machine (LLVM) experience{{< /alert >}}
 
-This blog post explores LLVM and provides a tutorial on how to use it to write a compiler for the APL programming language.
+This blog post explores LLVM and provides a tutorial on how to use it to write a compiler for the APL programming language ([code repository](https://github.com/JoelMathewC/apl-llvm)).
 
 ![](repl-demo.gif)
 
@@ -87,6 +87,15 @@ APL is a programming language introduced in Kenneth Iverson’s Turing award-win
 
 If you’re interested in building an APL compiler, I would recommend [this resource](https://xpqz.github.io/learnapl/intro.html), as it covers the language in great detail. However, if you’re just here for the LLVM bits, some of my not-so-complete explanation should get you by. Throughout this tutorial, we’ll build the APL compiler to match APL's functionality as outlined in the resource above. We’ll build the compiler in C++.
 
+This blog post splits the process of writing a compiler into four stages, the completed code at each stage is available on seperate GitHub branches as indicated below
+
+| SNo. | Stage | GitHub branch |
+|-|-|-|
+| 1 | Lexer and Parser | [stage1/lexer-parser](https://github.com/JoelMathewC/apl-llvm/tree/stage1/lexer-parser) |
+| 2 | AST Construction | [stage2/ast-construct](https://github.com/JoelMathewC/apl-llvm/tree/stage2/ast-construct) |
+| 3 | LLVM Codegen | [stage3/llvm-codegen](https://github.com/JoelMathewC/apl-llvm/tree/stage3/llvm-codegen) |
+| 4 | JIT Compiler | [stage4/jit-compiler](https://github.com/JoelMathewC/apl-llvm/tree/stage4/jit-compiler) |
+
 ### Quick APL Primer
 
 APL was not originally intended to be a programming language. It would be more appropriate to call it a set of notations that can be strung together to express algorithms. APL programs consist of a combination of numeric literals and operator symbols (and a few other things that we'll conveniently ignore). APL has around 30 operator symbols, most of which are overloaded to imply different meanings when used in monadic or dyadic contexts. Below, we enumerate some APL basics ahead of our discussion on how we built a compiler for it.
@@ -131,11 +140,127 @@ APL was not originally intended to be a programming language. It would be more a
 
 The compiler we build will be limited to just these APL features since that simplifies implementation significantly.
 
-### Stage 1: Lexers and Parsers
+### Stage 1: Lexer and Parser
 
-Parsing is the process of converting a string of characters that form a program into a some logical representation we can analyse. The logical representation in this case is an abstract syntax tree but we'll get to that in the next section. When it comes to parsing we have a bunch of options. I wrote my first compiler using Lex/YACC parser generator but Flex/Bison are a little more popular over those variants since they are free and open-source. I will note that whether or not you use a parser generator is upto you, many folks prefer to write their own parser for the languages they build, but for this tutorial I will use Flex/Biso since it works better for me. You may find this introduction to bison useful - [ref](https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/120%20Introducing%20bison.pdf) and [ref](https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/050%20Flex%20In%20A%20Nutshell.pdf)
+Parsing is the process of converting a string of characters that form a program into a some logical representation we can analyse. The logical representation in this case is an abstract syntax tree but we'll get to that in the next section. When it comes to parsing we have a bunch of options. I wrote my first compiler using the Lex/YACC parser generator but Flex/Bison are a little more popular over those variants since they are free and open-source. I will note that whether or not you use a parser generator is upto you, many folks prefer to write their own parser for the languages they build, but for this tutorial I will use Flex/Bison. You may find this introduction to [Flex](https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/050%20Flex%20In%20A%20Nutshell.pdf) and [Bison](https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/120%20Introducing%20bison.pdf) as useful references. If you do decide to work with Flex/Bison, use the package manager on your machine to install the two tools. 
 
-If you do decide to work with Flex/Bison, use the package manager on your machine to install the two tools. I use an Intel Mac and homebrew as my package manager, so I installed it from there.
+At the end of this section we will have an interface capable of parsing APL programs and flagging certain classes of syntax errors.
+
+![](stage1.png)
+
+#### Bison
+
+Bison is a parser generator that takes a grammar description as inputs and generates C/C++ parser code that adheres to the said grammar. Naturally, the follow up question here is what is a grammar? 
+
+A grammar is a description of the syntax of a language. Grammars consist of a series of rules. Each rule consists of tokes which can be either terminal or non-terminal.
+- **Terminal Tokens**: These tokens do not expand further. Can only occur on the RHS of a rule.
+- **Non-Terminal Tokens**: Tokens that are expected to expand further into a sequence of other terminal/non-terminal tokens. Can occur on either RHS or LHS of a rule.
+
+The limited APL language we are building a compiler for here has a very simple grammar as shown below.
+```c++ {linenos=true}
+start: prgm INPUT_COMPLETED {YYACCEPT;}
+    | INPUT_COMPLETED       {YYACCEPT;}
+    | EXIT                  {exit(0);}
+
+prgm: op_expr           {} 
+
+op_expr: '(' op_expr ')'        {}
+    | OPERATOR op_expr          {}    
+    | op_expr OPERATOR op_expr  {}    
+    | array                     {}
+
+array: array LITERAL                {}
+    | array HIGH_MINUS LITERAL      {}
+    | HIGH_MINUS LITERAL            {}
+    | LITERAL                       {}
+```
+
+- This grammar description has 5 terminal tokens: `INPUT_COMPLETED`, `EXIT`, `OPERATOR`, `HIGH_MINUS` and `LITERAL`.
+- Bison generates a bottom-up parser, which means that for any input, the rules are resolved from bottom till they reach the top-most rule (in this case the **start** rule).
+- Lines 12-15 indicate that an array can be a single positive or negative number or a collection of positive adn negative number. Its important to note that we can obtain recursive behaviour by using the same non-terminal token on either side of the rule.
+- Lines 7-10 indicate that an operation expression can be monadic or dyadic. Additonally, a description of an array is also a valid operation expression and so enclosing expressions within brackets. Due to the recursive usage of the **op_expr** non-terminal token, we get the capability of composing operations together.
+- Line 5 indicates that a valid APL program is any **op_expr**. The intend of having a seperate rule here is so that if we decide to extend APL to support some of its other features we can append to the rule with or conditions here.
+- Lines 1-3 indicate that `EXIT` should result in the termination of the program and `INPUT_COMPLETED` indicates the parser can stop looking for more inputs from the console/file.
+
+To generate the parser from the grammar description (`parser.y`), run the following command
+```bash
+bison -o parser.tab.c --defines=parser.tab.h parser.y
+```
+
+{{< alert icon="github" cardColor="#0D47A1" textColor="#ffffff" iconColor="#ffffff" >}}If you are interested in seeing what the grammar for a more complicated OOP language looks like, you can take a look at [this](https://github.com/JoelMathewC/eXpl/blob/main/code.y). {{< /alert >}}
+
+#### Flex
+
+The parser's role is to group a stream of terminal tokens into a syntatically valid program but how do we go from a character stream to the terminal token stream?
+
+The lexer is responsible for that. Flex is a lexer generator that converts a character stream to terminal tokens using a series of string capture rules.
+
+```c++ {linenos=true}
+[ \t]+     {}
+(⍝.*)       {}
+
+"\n"        {return token::INPUT_COMPLETED;}
+"quit()"    {return token::EXIT;}
+
+"¯"         {return token::HIGH_MINUS;}
+[()]	    {return *yytext;}
+
+"+"         {return token::OPERATOR;}
+"-"         {return token::OPERATOR;}
+"x"         {return token::OPERATOR;}
+"÷"         {return token::OPERATOR;}
+"⍳"         {return token::OPERATOR;}
+"⍴"         {return token::OPERATOR;}
+
+[0-9]+(\.[0-9]+)?   {yylval->emplace<float>(std::stod(yytext)); return token::LITERAL;}
+
+.   {printf("unknown character: %c", *yytext); return *yytext;}
+```
+
+- Lines 1-2 indicate that we should ignore all comments and spaces/tabs in the character stream.
+- Lines 4-17 indicate rules for the 5 non-terminal tokens. The curly braces indicate the action to be performed on a match.
+  - It may be noted that line 8 returns `*yytext`. That is a special variable which is a pointer to the character stream that was just matched.
+  - `yylval->emplace<float>(std::stod(yytext));` on the otherhand is used for when we want to return an explicit token but want the token to carry with it a particular value. In this case we want the literal token to carry with it the floating point number that it captured.
+- Line 19 is a catch all for any character that cannot be converted to a valid token in the program.
+
+To generate the lexer from the above description (`lexer.l`), run the following command
+```bash
+flex -o lexer.yy.c lexer.l
+```
+#### REPL Interface
+
+REPL stands for Read-Eval-Print-Loop. REPL interfaces are intended to loops that perform exactly that, read inputs, evaluate the result, print the result and do it all over again. In this tutorial we're building a JIT compiler that is exposed via a REPL interface.
+
+The REPL interface is really simple, it uses a couple of ANSI codes to print a pretty header when our program launches and then starts a while loop to accept user inputs. Each input is then parsed and the loop restarts.
+```c++
+int main() {
+  cout << "\033[1;32m=== APL REPL v0.1 ===\033[0m\n";
+  cout << "\033[3;37mType \"quit()\" to exit this program\033[0m\n";
+  cout << "\033[3;37mAll outputs are of the form: <shape> [ array elements "
+          "]\033[0m\n\n";
+  AplLexer lexer;
+  yy::parser parser(lexer);
+
+  while (true) {
+    cout << "\033[35m>>>\033[0m ";
+    parser();
+  }
+
+  return 0;
+}
+```
+
+#### Putting it together
+Once you put together all of the above code, you can use a build system like CMake to have the project build in a single command as opposed to running the flex/bison commands each time before compiling. After adding a CMakeLists.txt similar to [this one](https://github.com/JoelMathewC/apl-llvm/blob/stage1/lexer-parser/CMakeLists.txt). You should be able to have your project compiler with the following commands
+
+```bash
+cmake -B build
+cmake --build build/ --target apl-repl
+./build/apl-repl
+```
+
+I skipped over a few details here in hopes of making the article a little shorter. But one key component, you will notice is that we need flex and bison to both generate C++ code. This creates a few complications and hence we'll need to add some boilerplate to get it to work appropriately. There is an excellent explaination of what needs to be done and why in [this SO post](https://stackoverflow.com/questions/76509844/how-do-you-interface-c-flex-with-c-bison). For anyone wondering why we cannot simply generate C code here, the answer is that we need the parser to store values in variant format (as opposed to unions which is the only supported type in C) so that we can use smart pointers.
+
 
 ### Stage 2: AST Construction
 
