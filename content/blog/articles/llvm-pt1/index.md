@@ -10,7 +10,7 @@ If you have ever considered compiler development as a profession, you have defin
 
 This blog post explores LLVM and provides a tutorial on how to use it to write a compiler for the APL programming language ([code repository](https://github.com/JoelMathewC/apl-llvm)).
 
-![](repl-demo.gif)
+![Final Result Demo](repl-demo.gif)
 
 ## What is LLVM?
 
@@ -79,7 +79,7 @@ define noundef i32 @main() #0 {
 
 Now that we have discussed the basics of LLVM, the best way to understand these concepts is to build a small compiler using it. The following few sections of this blog post focus on that.
 
-## LLVM Tutorial
+## Tutorial
 
 The purpose of this tutorial is to familiarize readers with LLVM IR and, specifically, its code generation. So we will not touch on optimization passes or other components of the LLVM stack (hopefully a future blog post will). Since we’re going to build a compiler, the first step is to identify a language that our compiler should compile. The [official LLVM tutorial](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/index.html) develops a compiler for a fictitious language named Kaleidoscope. In this tutorial, I document the process of creating a compiler for the APL programming language.
 
@@ -146,7 +146,7 @@ Parsing is the process of converting a string of characters that form a program 
 
 At the end of this section we will have an interface capable of parsing APL programs and flagging certain classes of syntax errors.
 
-![](stage1.png)
+![Stage1 Compiler Result](stage1.png)
 
 #### Bison
 
@@ -251,7 +251,7 @@ int main() {
 ```
 
 #### Putting it together
-Once you put together all of the above code, you can use a build system like CMake to have the project build in a single command as opposed to running the flex/bison commands each time before compiling. After adding a CMakeLists.txt similar to [this one](https://github.com/JoelMathewC/apl-llvm/blob/stage1/lexer-parser/CMakeLists.txt). You should be able to have your project compiler with the following commands
+Once you put together all of the above code, you can use a build system like CMake to have the project build in a single command as opposed to running the flex/bison commands each time before compiling. After adding a CMakeLists.txt similar to [this one](https://github.com/JoelMathewC/apl-llvm/blob/stage1/lexer-parser/CMakeLists.txt). You should be able to have your project compile with the following commands
 
 ```bash
 cmake -B build
@@ -264,6 +264,76 @@ I skipped over a few details here in hopes of making the article a little shorte
 
 ### Stage 2: AST Construction
 
+Now that we have a functioning lexer and parser, we can use them to convert an APL program into some format that easier for us to process. That format is generally referred to as an Abstract Syntax Tree (AST). An AST does not have a fixed structure, you would build a different one for each language you wish to compile. 
+
+At the end of this section we will have an interface capable of parsing APL programs and printing out the abstract syntax tree of the program.
+
+![Stage2 Compiler Result](stage2.png)
+
+#### AST Node Classes
+For the limited APL language we are considering in this tutorial, our AST needs to support just three types of nodes
+1. **Literal**: To store arrays
+2. **MonadicCall**: To store monadic operations
+3. **DyadicCall**: To store dyadic operations
+
+![Node Class Diagram](node-class-dgm.png)
+
+The class methods can be implemented as follows. The **tree** aspect of this class lies in the fact that `arg` can be a literal, monadic op or dyadic op.
+```c++
+MonadicCall::MonadicCall(unique_ptr<AplOp::MonadicOp> op, unique_ptr<Node> arg)
+    : op(std::move(op)), arg(std::move(arg)) {}
+
+const string MonadicCall::print() const {
+  return "MonadicCall(" + this->op->print() + "," + this->arg->print() + ")";
+}
+```
+
+#### AST Op Classes
+
+The `op` field in the call classes above can be of `MonadicOp` or `DyadicOp` type.
+
+![Op Class Diagram](op-class-dgm.png)
+
+The grammar treats all operators as one `OPERATOR` token. We can distinguish between operators by having the lexer return a Symbol enum as the `yylval` and then have the parser run the symbol through `createMonadicOp() / createDyadicOp()` to generate an Op class of appropriate type.
+```c++
+enum Symbol { PLUS, MINUS, TIMES, DIVIDE, IOTA, RHO };
+
+unique_ptr<AplOp::DyadicOp> createDyadicOp(Symbol op) {
+  switch (op) {
+  case Symbol::PLUS:
+    return make_unique<AplOp::AddOp>();
+  ...
+  default:
+    throw std::logic_error("Specified dyadic operation is unimplemented!");
+  }
+}
+
+const string AddOp::print() const { return "+"; }
+```
+
+#### Putting it together
+
+Now that we have the necessary classes, we update the grammar to create AST nodes as and when rules are satisfied. We additionally, modify the parser to accept `unique_ptr<Node> astRetPtr` as input so that we can assign the result to it. We then modify the REPL program to print the AST to have the tree printed to console.
+
+```c++
+start: prgm INPUT_COMPLETED {astRetPtr = std::move($1); YYACCEPT;}
+    | INPUT_COMPLETED       {YYACCEPT;}
+    | EXIT                  {exit(0);}
+
+prgm: op_expr           {$$ = std::move($1);} 
+
+op_expr: '(' op_expr ')'        {$$ = std::move($2);}
+    | OPERATOR op_expr          {$$ = AplAst::MonadicCall::create($1, $2);}    
+    | op_expr OPERATOR op_expr  {$$ = AplAst::DyadicCall::create($2, $1, $3);}    
+    | array                     {$$ = std::move($1);}
+
+array: array LITERAL                {$$ = AplAst::Literal::create($1->getVal(),$2);}
+    | array HIGH_MINUS LITERAL      {$$ = AplAst::Literal::create($1->getVal(),-1*$3);}
+    | HIGH_MINUS LITERAL            {$$ = AplAst::Literal::create(-1 * $2);}
+    | LITERAL                       {$$ = AplAst::Literal::create($1);}
+```
+
+
 ### Stage 3: LLVM Codegen
 
 ### Stage 4: JIT Compiler
@@ -271,3 +341,5 @@ I skipped over a few details here in hopes of making the article a little shorte
 
 
 ## Closing Thoughts
+
+## References
