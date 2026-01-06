@@ -280,11 +280,13 @@ For the limited APL language we are considering in this tutorial, our AST needs 
 
 The class methods can be implemented as follows. The **tree** aspect of this class lies in the fact that `arg` can be a literal, monadic op or dyadic op.
 ```c++
-MonadicCall::MonadicCall(unique_ptr<AplOp::MonadicOp> op, unique_ptr<Node> arg)
-    : op(std::move(op)), arg(std::move(arg)) {}
+DyadicCall::DyadicCall(unique_ptr<AplOp::DyadicOp> op, unique_ptr<Node> arg1,
+                       unique_ptr<Node> arg2)
+    : op(std::move(op)), arg1(std::move(arg1)), arg2(std::move(arg2)) {}
 
-const string MonadicCall::print() const {
-  return "MonadicCall(" + this->op->print() + "," + this->arg->print() + ")";
+const string DyadicCall::print() const {
+  return "DyadicCall(" + this->op->print() + "," + this->arg1->print() + "," +
+         this->arg2->print() + ")";
 }
 ```
 
@@ -333,13 +335,231 @@ array: array LITERAL                {$$ = AplAst::Literal::create($1->getVal(),$
     | LITERAL                       {$$ = AplAst::Literal::create($1);}
 ```
 
-
 ### Stage 3: LLVM Codegen
+
+At the end of the previous stage we were able to successfully convert a stream of characters into an AST. In this stage we'll take a look at how we can lower that AST into the LLVM IR.
+
+At the end of this section we will have an interface capable of parsing APL programs and printing out the corresponding LLVM IR.
+
+![Stage3 Compiler result](stage3.png)
+
+#### CodegenManager
+To help organize the code, I chose to create this class to house all codegen specific functionality.
+
+![Codegen Class Diagram](codegen-class-dgm.png)
+
+The properties of this class are as follows
+- `context`: LLVM object that maintains a global context of codegeneration
+- `module`: LLVM module of generated code
+- `builder`: LLVM IR builder object that can be used to issue instructions during codegen
+- `dataLayout`: How data is layed out
+
+The `initializeContextAndModule()` function initializes the above fields and the `getAndReintializeContextAndModule()` allows us to retrieve the module and context for compilation while reinitializing the fields for the next codegeneration.
+
+Apart from initializing the module and context, the above functions also generate IR code for an LLVM function and set the builder to insert any future builder call to insert into the function.
+```c++ {linenos=true}
+// Define a function and set the builders insertion point to be a basic
+  // block in the function.
+  FunctionType *FT = FunctionType::get(this->builder->getPtrTy(),
+                                       std::vector<Type *>(), false);
+  Function *F =
+      Function::Create(FT, Function::ExternalLinkage,
+                       Constants::anonymousExprName, this->module.get());
+  BasicBlock *BB = BasicBlock::Create(*this->context, "", F);
+  this->builder->SetInsertPoint(BB);
+```
+
+#### RValue
+One of the most important aspects of writing a compiler is knowing what information is available at compile time and what is available at runtime. For the APL compiler we are building now, consider the following case
+- **Case 1** (compiling `1 2 3 + 1 2 3`): It would be easy to generate code for this expression if within the AST we stored the shapes of the literals. Because then we can have the codegen function loop over three elements and perform the addition.
+- **Case 2** (compiling `(2 2 ⍴ 1 2 3 4) + (2 2 ⍴ 5 6 7 8)`): Here unfortunately, we cannot guess the shape of the LHS and RHS without computing the expression and hence we will not know till runtime what the shape of the two operands is going to be.
+
+To be able to account for Case 2, its important that our codegen function is generic enough to support all cases. In order to achieve that we need a way to access the shape of the array at runtime. Since we're going to be doing this in LLVM IR which is assembly like, this means we'll need three things
+- `resultPtr`: A pointer to the actual data in the array
+- `shapePtr`: A pointer to a 1D array where each element indicates a component of the shape (i.e. `[1 2 3] => 1x2x3` shape). A product of all the elements in this array gives the bounds of the `resultPtr` array.
+- `shapeLength`: The size of the `shapePtr` array.
+
+We can organize these fields into a class called `RValue` which can be used as the type for all input arguments and outputs (see `CodegenManager` class diagram above).
+```c++
+class RValue {
+  Value *resultPtr;
+  Value *shapePtr;
+  Value *shapeLength;
+
+public:
+  RValue(Value *resultPtr, Value *shapePtr, Value *shapeLength);
+  Value *getResultPtr();
+  Value *getShapePtr();
+  Value *getShapeLength();
+};
+```
+
+#### Dyadic Add
+
+Performing an addition operations on two arrays involves the following steps
+1. Verify that the two arguments are of the same shape (coming up in next subsection)
+2. Allocate space for the result (coming up in next subsection)
+3. Loop through elements in the array and perform the addition.
+
+The following code is the body of the `AddCodegen` function with steps 1, 2 and loops in 3 abstracted away. Lines 13-34 describe the body of the loop and they contain 4 different types of statements
+- `builder->CreateLoad`: This is adds a load instruction into the basic block. All values residing in memory need to be first loaded into a register before they can be used for processing. The load API call needs a reference to the memory location from which the load needs to take place.
+- `builder->CreateGEP`: The `GEP` is an acronym for `getelementptr` which allows us to perform pointer arithemtic, which is useful to get offsets from base memory location based on the iterator value in a loop.
+- `builder->CreateFAdd`: Generates code for floating-point addition of two input registers and assigns the output to a new register.
+- `builder->CreateStore`: Generates code to store the register value in a specific memory location.
+
+```c++ {linenos=true}
+  // Verify that arg1.shape == arg2.shape
+  verifyDyadicOperands(arg1, arg2);
+
+  // Allocate space for the result
+  auto [resultBasePtr, resultSize] =
+      allocHeap(totalElemCount, this->builder->getFloatTy());
+
+  // for(i=0; i<totalElemCount; ++i)
+  auto [processLoopBB, processIterAlloca] =
+      this->addLoopStart(this->builder->getInt32(0));
+
+  // Load value of iterator i
+  Value *iterVal = this->builder->CreateLoad(Type::getInt32Ty(*this->context), processIterAlloca);
+
+  // arg1[i]
+  Value *arg1Val = this->builder->CreateLoad(
+    Type::getFloatTy(*this->context), 
+    this->builder->CreateGEP(Type::getFloatTy(*this->context), arg1.getResultPtr(), {iterVal})
+  );
+
+  // arg2[i]
+  Value *arg2Val = this->builder->CreateLoad(
+    Type::getFloatTy(*this->context), 
+    this->builder->CreateGEP(Type::getFloatTy(*this->context), arg2.getResultPtr(), {iterVal})
+  );
+
+  // res = arg1[i] + arg2[i]
+  Value *processVal = this->builder->CreateFAdd(arg1Val, arg2Val);
+
+  // result[i] = res
+  this->builder->CreateStore(
+    processVal, 
+    this->builder->CreateGEP(Type::getFloatTy(*this->context), resultBasePtr, {iterVal})
+  );
+
+  // endfor
+  this->addLoopEnd(processLoopBB, nextIterVal, totalElemCount);
+```
+
+#### Loops
+
+Since we will use a lot of loops during the codegen process it might be best to abstract this functionality out into a seperate function and then call it as needed. We create two functions `addLoopStart` and `addLoopEnd` for this purpose.
+
+When creating loops we need to consider a few things
+1. Every time a loop is instantiated we create two new basic blocks: `LoopBB` and `AfterLoopBB`. The fromer is the block that contains the loop body and will end with a condition that will send the control back to the top of the block for the next iteration. The former on the other hand is the block of code that executes after the loop completes execution.
+2. To control loop exit we use an interator in the loop, however due to the Single Static Assignment constraint of LLVM, we cannot update the iterator register inplace so we always start the loop by loading the iterator value from memory and end the loop by writing the new iterator value to the same memory location. Since we need a memory location for this we use the `builder->CreateAlloca` function which reserves a memory on the stack.
+3. At the end of the loop we use `builder->CreateCondBr` to decide whether to exit the loop or move control back to the top of the loop body basic block.
+
+```c++ {linenos=true}
+pair<BasicBlock *, Value *>
+LlvmCodegen::addLoopStart(Value *loopIterInitialValue) {
+  // Allocate space to store the value of the iterator
+  AllocaInst *alloca =
+      this->builder->CreateAlloca(Type::getInt32Ty(*this->context), nullptr);
+  builder->CreateStore(loopIterInitialValue, alloca);
+
+  // Unconditional entry to loop block with builder set to insert instructions
+  // there
+  Function *func = this->builder->GetInsertBlock()->getParent();
+  BasicBlock *LoopBB = BasicBlock::Create(*this->context, "", func);
+  this->builder->CreateBr(LoopBB);
+  this->builder->SetInsertPoint(LoopBB);
+  return make_pair(LoopBB, alloca);
+}
+
+void LlvmCodegen::addLoopEnd(BasicBlock *loopBB, Value *nextIterVal,
+                             Value *loopIterFinalValue) {
+  Value *endCond = builder->CreateICmpULT(nextIterVal, loopIterFinalValue);
+
+  // Create a block for execution after the loop and test if the end condition
+  // is satisfied.
+  Function *func = this->builder->GetInsertBlock()->getParent();
+  BasicBlock *AfterLoopBB = BasicBlock::Create(*this->context, "", func);
+  this->builder->CreateCondBr(endCond, loopBB, AfterLoopBB);
+  this->builder->SetInsertPoint(AfterLoopBB);
+}
+```
+
+#### Allocating Memory
+
+When performing any operation we'll need to reserve space for the result and that needs to come from the heap. We add support for that by using `module->getOrInsertFunction` to insert the definition of the malloc function so that we can call it to reserve space in memory for a particular type.
+
+```c++ {linenos=true}
+pair<Value *, Value *> LlvmCodegen::allocHeap(Value *size, Type *elemType) {
+  FunctionCallee mallocFunc = this->module->getOrInsertFunction(
+      "malloc", this->builder->getPtrTy(),
+      Type::getInt32Ty(*this->context));
+
+  uint64_t elementSize =
+      this->module->getDataLayout().getTypeAllocSize(elemType);
+
+  Value *totalSize = builder->CreateMul(
+      ConstantInt::get(Type::getInt32Ty(*this->context), elementSize), size);
+
+  return make_pair(this->builder->CreateCall(mallocFunc, totalSize), totalSize);
+}
+```
+
+Being able to reference external functions this way saves us time from having to reimplement things from scratch. In a similar we can use the `__cxa_throw` function to get the throw functionality.
+
+{{< alert cardColor="#0D47A1" textColor="#ffffff" iconColor="#ffffff" >}} There are a few functions I skipped in explanations for since I hoped that those would be self-explanatory, namely `throwError()`, `verifyDyadicOperands()`, `print()` and `printResultsCodegen()`. {{< /alert >}}
+
+#### Putting it together
+To call the codegen functions created in the earlier subsections we will have to update each AST node to support a `codegen()` method which calls the respective method defined above.
+
+```c++
+AplCodegen::RValue AddOp::codegen(AplCodegen::LlvmCodegen *codegenManager,
+                                  AplCodegen::RValue lhs,
+                                  AplCodegen::RValue rhs) {
+  return codegenManager->addCodegen(lhs, rhs);
+}
+
+AplCodegen::RValue
+DyadicCall::codegen(AplCodegen::LlvmCodegen *codegenManager) {
+  return this->op->codegen(codegenManager, this->arg1->codegen(codegenManager),
+                           this->arg2->codegen(codegenManager));
+}
+```
+
+We will also have to update the REPL code to instantiate the `CodegenManager` and call the module print function.
+```c++
+...
+auto codegenManager = make_unique<AplCodegen::LlvmCodegen>();
+while (true) {
+  ...
+  if (astRetPtr != nullptr) {
+    auto llvmIr = astRetPtr->codegen(codegenManager.get());
+    auto [context, module] =
+        codegenManager->getAndReinitializeContextAndModule();
+    module->print(errs(), nullptr);
+    astRetPtr = nullptr;
+  }
+}
+...
+```
+
+{{< alert cardColor="#0D47A1" textColor="#ffffff" iconColor="#ffffff" >}} To compile the above code you will have to update the CMakeLists.txt to include LLVM in the build process ([ref](https://github.com/JoelMathewC/apl-llvm/blob/stage3/llvm-codegen/CMakeLists.txt)). {{< /alert >}}
 
 ### Stage 4: JIT Compiler
 
+Now that we have generated the LLVM IR, we need to set up a JIT compiler that can process the LLVM IR and generate a result.
 
+At the end of this section we will have a functioning REPL interface capable of doing array addition.
+
+![Stage4 Compiler result](stage4.png)
 
 ## Closing Thoughts
+Congratulations on getting to the end of the blog post! I hope this helped informed your understanding of compiler development and LLVM. I just wanted to close by saying that building a compiler was one of the first complicated coding projects I undertook during my undergrad and I really enjoyed and I hope that this tutorial instilled in you some curiosity to attempt to write your own. The LLVM docs are very confusing for anyone thats new so I would recommend using an LLM to help point you in the right directions, due to the RAG nature of these system they are probably the easiest way to search through the docs, however try not to rely on the LLM outputs and instead traverse to the doc and try to get what you want from there, it can help make the learning process more fullfilling.
 
 ## References
+1. https://llvm.org/docs/LangRef.html
+2. https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/index.html
+3. https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/050%20Flex%20In%20A%20Nutshell.pdf
+4. https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/120%20Introducing%20bison.pdf
+5. https://github.com/DSLs-for-HPC/APL2C
