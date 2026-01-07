@@ -95,6 +95,7 @@ This blog post splits the process of writing a compiler into four stages, the co
 | 2 | AST Construction | [stage2/ast-construct](https://github.com/JoelMathewC/apl-llvm/tree/stage2/ast-construct) |
 | 3 | LLVM Codegen | [stage3/llvm-codegen](https://github.com/JoelMathewC/apl-llvm/tree/stage3/llvm-codegen) |
 | 4 | JIT Compiler | [stage4/jit-compiler](https://github.com/JoelMathewC/apl-llvm/tree/stage4/jit-compiler) |
+| 5 | Bonus | [stage5/bonus](https://github.com/JoelMathewC/apl-llvm/tree/stage5/bonus) |
 
 {{< alert cardColor="#0D47A1" textColor="#ffffff" iconColor="#ffffff" >}} This tutorial is supposed to be a high-level view of compiler development with LLVM. While I try to explain a lot of the details, I unfortunately haven’t done a line-by-line walkthrough. I hope you can correlate some of the explanations in this article with the stage-wise code above for a more thorough understanding. {{< /alert >}}
 
@@ -360,7 +361,7 @@ The properties of this class are as follows.
 The `initializeContextAndModule()` function initializes the above fields, and the `getAndReintializeContextAndModule()` allows us to retrieve the module and context for compilation while reinitializing the fields for the next code generation.
 
 Apart from initializing the module and context, we also generate the IR for an LLVM function that will contain all the generated code. As mentioned earlier, functions are a collection of basic blocks. Basic blocks are simply a sequence of LLVM IR instructions that are executed serially. The builder can be configured to insert code into a specific basic block using the `builder->SetInsertPoint` function. The use of multiple basic blocks will be clarified further when we discuss loops.
-```c++ {linenos=true}
+```c++
   FunctionType *FT = FunctionType::get(this->builder->getPtrTy(),
                                        std::vector<Type *>(), false);
   Function *F =
@@ -460,7 +461,7 @@ When creating loops, we need to consider a few things.
 2. To control loop exit, we use an iterator in the loop. However, due to LLVM's Single Static Assignment constraint, we cannot update the iterator register in place, so we always start the loop by loading the iterator value from memory and end it by writing the new value back to the same location. Since we need a memory location for this, we use the `builder->CreateAlloca` function, which reserves a memory location on the stack.
 3. At the end of the loop, we use `builder->CreateCondBr` to decide whether to exit the loop or move control back to the top of the loop body basic block.
 
-```c++ {linenos=true}
+```c++
 pair<BasicBlock *, Value *>
 LlvmCodegen::addLoopStart(Value *loopIterInitialValue) {
   // Allocate space to store the value of the iterator
@@ -494,7 +495,7 @@ void LlvmCodegen::addLoopEnd(BasicBlock *loopBB, Value *nextIterVal,
 
 When performing any operation, we'll need to reserve space for the result, and that needs to come from the heap. We add support for that by using `module->getOrInsertFunction` to insert the definition of the malloc function so that we can call it to reserve space in memory for a particular type.
 
-```c++ {linenos=true}
+```c++
 pair<Value *, Value *> LlvmCodegen::allocHeap(Value *size, Type *elemType) {
   FunctionCallee mallocFunc = this->module->getOrInsertFunction(
       "malloc", this->builder->getPtrTy(),
@@ -552,11 +553,13 @@ while (true) {
 
 ### Stage 4: JIT Compiler
 
-Now that we have generated the LLVM IR, we need to set up a JIT compiler that can process the LLVM IR and generate a result.
+Now that we have generated the LLVM IR, we need to set up a JIT compiler to process it and produce a result. LLVM provides ORC JIT APIs. These are the APIs used in the JIT compiler implemented in the LLVM Kaleidoscope tutorial. We can use the same compiler here to compile our LLVM IR.
 
-At the end of this section we will have a functioning REPL interface capable of doing array addition.
+After adding the JIT compiler, the REPL interface will be functional and capable of performing array addition.
 
 ![Stage4 Compiler result](stage4.png)
+
+{{< alert cardColor="#0D47A1" textColor="#ffffff" iconColor="#ffffff" >}} I am deferring JIT compiler explanations to a future article, since this one is already too long and I want to explain that in greater detail. Additionally, throughout this tutorial, I only talked about codegen for the dyadic add operation, but the [stage5/bonus](https://github.com/JoelMathewC/apl-llvm/tree/stage5/bonus) branch contains code for all other operations in our grammar as well. {{< /alert >}}
 
 ## Closing Thoughts
 Congratulations on getting to the end of the blog post! I really appreciate you taking the time to sift through this rather long article, and I hope this helped inform your understanding of compiler development and LLVM. For anyone starting to work with LLVM, the docs can be intimidating, so I recommend using an LLM to point you in the right direction. Due to the RAG nature of these systems, they are probably the easiest way to search through the docs; however, try not to rely on the LLM outputs and instead traverse the docs to get what you want. It can help make the learning process more fulfilling.
@@ -565,8 +568,9 @@ I just wanted to close by saying that building a compiler was one of the first c
 
 ## References
 1. https://dl.acm.org/doi/abs/10.5555/977395.977673
-2. https://llvm.org/docs/LangRef.html
-3. https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/index.html
-4. https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/050%20Flex%20In%20A%20Nutshell.pdf
-5. https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/120%20Introducing%20bison.pdf
-6. https://github.com/DSLs-for-HPC/APL2C
+2. https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/050%20Flex%20In%20A%20Nutshell.pdf
+3. https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/handouts/120%20Introducing%20bison.pdf
+4. https://llvm.org/docs/LangRef.html
+5. https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/index.html
+6. https://llvm.org/docs/ORCv2.html
+7. https://github.com/DSLs-for-HPC/APL2C
