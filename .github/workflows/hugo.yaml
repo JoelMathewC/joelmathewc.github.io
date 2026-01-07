@@ -32,6 +32,7 @@ jobs:
       - name: Add Firebase Secrets
         run: |
           echo "\n\n${FIREBASE_CONFIG}" >> config/_default/params.toml
+          cat config/_default/params.toml
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
