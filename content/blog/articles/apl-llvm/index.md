@@ -96,6 +96,8 @@ This blog post splits the process of writing a compiler into four stages, the co
 | 3 | LLVM Codegen | [stage3/llvm-codegen](https://github.com/JoelMathewC/apl-llvm/tree/stage3/llvm-codegen) |
 | 4 | JIT Compiler | [stage4/jit-compiler](https://github.com/JoelMathewC/apl-llvm/tree/stage4/jit-compiler) |
 
+{{< alert cardColor="#0D47A1" textColor="#ffffff" iconColor="#ffffff" >}} This tutorial is supposed to be a high-level view of compiler development with LLVM. While I try to explain a lot of the details, I unfortunately haven’t done a line-by-line walkthrough. I hope you can correlate some of the explanations in this article with the stage-wise code above for a more thorough understanding. {{< /alert >}}
+
 ### Quick APL Primer
 
 APL was not originally intended to be a programming language. It would be more appropriate to call it a set of notations that can be strung together to express algorithms. APL programs consist of a combination of numeric literals and operator symbols (and a few other things that we'll conveniently ignore). APL has around 30 operator symbols, most of which are overloaded to imply different meanings when used in monadic or dyadic contexts. Below, we enumerate some APL basics ahead of our discussion on how we built a compiler for it.
@@ -377,7 +379,7 @@ One of the most important aspects of writing a compiler is knowing what informat
 To account for Case 2, our codegen function must be generic enough to support all cases. To achieve that, we need a way to access the array's shape at runtime. Since we’re going to be doing this in LLVM IR, which is assembly-like, we’ll need three things.
 
 - **resultPtr**: A pointer to the actual data in the array
-- **shapePtr**: A pointer to a 1D array where each element indicates a component of the shape (i.e., [1 2 3] => 1x2x3 shape). A product of all the elements in this array gives the bounds of the resultPtr array.
+- **shapePtr**: A pointer to a 1D array where each element indicates a component of the shape (i.e., `[1 2 3] => 1x2x3` shape). A product of all the elements in this array gives the bounds of the resultPtr array.
 - **shapeLength**: The size of the shapePtr array.
 
 We can organize these fields into a class called RValue, which can serve as the type for all input arguments and outputs (see the CodegenManager class diagram above).
@@ -557,7 +559,9 @@ At the end of this section we will have a functioning REPL interface capable of 
 ![Stage4 Compiler result](stage4.png)
 
 ## Closing Thoughts
-Congratulations on getting to the end of the blog post! I hope this helped informed your understanding of compiler development and LLVM. I just wanted to close by saying that building a compiler was one of the first complicated coding projects I undertook during my undergrad and I really enjoyed and I hope that this tutorial instilled in you some curiosity to attempt to write your own. The LLVM docs are very confusing for anyone thats new so I would recommend using an LLM to help point you in the right directions, due to the RAG nature of these system they are probably the easiest way to search through the docs, however try not to rely on the LLM outputs and instead traverse to the doc and try to get what you want from there, it can help make the learning process more fullfilling.
+Congratulations on getting to the end of the blog post! I really appreciate you taking the time to sift through this rather long article, and I hope this helped inform your understanding of compiler development and LLVM. For anyone starting to work with LLVM, the docs can be intimidating, so I recommend using an LLM to point you in the right direction. Due to the RAG nature of these systems, they are probably the easiest way to search through the docs; however, try not to rely on the LLM outputs and instead traverse the docs to get what you want. It can help make the learning process more fulfilling.
+
+I just wanted to close by saying that building a compiler was one of the first complex coding projects I undertook during my undergrad, and I really enjoyed it. The structure of this tutorial is actually heavily inspired by the roadmap used for that [undergrad project](https://silcnitc.github.io/expl-docs/). I hope this tutorial sparked some curiosity in you to write your own compiler, and hopefully you learned a few things along the way, too. This is also my first blog post on this page, so I expect this article to be a little rough around the edges. I hope to improve that over time, so if you have any feedback on what I can do better, please shoot me an email!
 
 ## References
 1. https://dl.acm.org/doi/abs/10.5555/977395.977673
