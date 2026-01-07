@@ -221,6 +221,7 @@ The lexer is responsible for that. Flex is a lexer generator that converts a cha
 - **Lines 4-17** indicate rules for the five non-terminal tokens. The curly braces indicate the action to be performed on a match.
   - It may be noted that line 8 returns `*yytext`. That is a special variable that points to the character stream that was just matched.
   - `yylval->emplace<float>(std::stod(yytext));` on the other hand, is used for when we want to return an explicit token but want the token to carry with it a particular value. In this case, we want the literal token to carry with it the floating-point number it captured.
+  - Due to a Flex limitation we cannot return unicode characters using `yytext` and `yylval`, hence we create seperate rules for each operator. In the next section, we'll update each rule to return a specific enum value for the matched symbol.
 - **Line 19** is a catch-all for any character that cannot be converted to a valid token in the program.
 
 To generate the lexer from the above description (`lexer.l`), run the following command
@@ -263,14 +264,14 @@ I skipped a few details here to make the article a little shorter. But one key c
 
 ### Stage 2: AST Construction
 
-Now that we have a functioning lexer and parser, we can use them to convert an APL program into some format that easier for us to process. That format is generally referred to as an Abstract Syntax Tree (AST). An AST does not have a fixed structure, you would build a different one for each language you wish to compile. 
+Now that we have a functioning lexer and parser, we can use them to convert an APL program into a format we can process more easily. That format is generally referred to as an Abstract Syntax Tree (AST). An AST does not have a fixed structure. You would need to build a different one for each language you wish to compile. 
 
-At the end of this section we will have an interface capable of parsing APL programs and printing out the abstract syntax tree of the program.
+At the end of this section, we will have an interface that can parse APL programs and print their abstract syntax trees.
 
 ![Stage2 Compiler Result](stage2.png)
 
-#### AST Node Classes
-For the limited APL language we are considering in this tutorial, our AST needs to support just three types of nodes
+#### Node Classes
+For the limited APL language we are considering in this tutorial, our AST needs to support just three types of nodes.
 1. **Literal**: To store arrays
 2. **MonadicCall**: To store monadic operations
 3. **DyadicCall**: To store dyadic operations
@@ -289,13 +290,13 @@ const string DyadicCall::print() const {
 }
 ```
 
-#### AST Op Classes
+#### Op Classes
 
 The `op` field in the call classes above can be of `MonadicOp` or `DyadicOp` type.
 
 ![Op Class Diagram](op-class-dgm.png)
 
-The grammar treats all operators as one `OPERATOR` token. We can distinguish between operators by having the lexer return a Symbol enum as the `yylval` and then have the parser run the symbol through `createMonadicOp() / createDyadicOp()` to generate an Op class of appropriate type.
+The grammar treats all operators as one `OPERATOR` token. We can distinguish between operators by having the lexer return a Symbol enum as the `yylval` and then have the parser run the symbol through `createMonadicOp() / createDyadicOp()` to generate an instance of the Op class of appropriate type.
 ```c++
 enum Symbol { PLUS, MINUS, TIMES, DIVIDE, IOTA, RHO };
 
@@ -314,7 +315,7 @@ const string AddOp::print() const { return "+"; }
 
 #### Putting it together
 
-Now that we have the necessary classes, we update the grammar to create AST nodes as and when rules are satisfied. We additionally, modify the parser to accept `unique_ptr<Node> astRetPtr` as input so that we can assign the result to it. We then modify the REPL program to print the AST to have the tree printed to console.
+Now that we have the necessary classes, we update the grammar to create AST nodes during the recursive application of the production rules. We additionally modify the parser to accept `unique_ptr<Node> astRetPtr` as input so that we can assign the result to it. We then modify the REPL program to print the AST to the console.
 
 ```c++
 start: prgm INPUT_COMPLETED {astRetPtr = std::move($1); YYACCEPT;}
