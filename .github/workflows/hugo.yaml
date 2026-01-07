@@ -34,7 +34,6 @@ jobs:
           FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
         run: |
           echo "${FIREBASE_CONFIG}" >> config/_default/params.toml
-          cat config/_default/params.toml
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
