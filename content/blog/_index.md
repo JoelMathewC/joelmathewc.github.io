@@ -1,3 +1,5 @@
-# Blog
+---
+title: "Blog"
+---
 
-_I'll have something here soon!_
+<br />

@@ -25,6 +25,11 @@
  pageRef = "blog"
  weight = 3
 
+ [[main]]
+  name = "Resume"
+  url = "https://drive.google.com/file/d/11_M-I2joALql_ljImqFnPDIfgAUoG0re/view?usp=sharing"
+  weight = 4
+
 #[[main]]
 #  name = "Parent"
 #  weight = 20
