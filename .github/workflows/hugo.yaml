@@ -30,8 +30,10 @@ jobs:
           submodules: recursive
           fetch-depth: 0
       - name: Add Firebase Secrets
+        env:
+          FIREBASE_CONFIG: ${{ secrets.FIREBASE_CONFIG }}
         run: |
-          echo "\n\n${FIREBASE_CONFIG}" >> config/_default/params.toml
+          echo "${FIREBASE_CONFIG}" >> config/_default/params.toml
           cat config/_default/params.toml
       - name: Setup Go
         uses: actions/setup-go@v5
