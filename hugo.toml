@@ -1,6 +1,6 @@
 baseURL = 'https://joelmathewc.github.io/'
 languageCode = 'en-us'
-title = '🛠️ JoelMathewC'
+title = 'JoelMathewC'
 theme = 'blowfish'
 
 [caches]
